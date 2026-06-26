@@ -329,28 +329,45 @@ bash $SPARK_HOME/sbin/start-history-server.sh \
 
 ---
 
-## 🚀 Cómo ejecutar el pipeline
+## 🚀 Ejecución del Pipeline
 
-### 1. Ingesta a Bronze (solo una vez)
+### Orquestación
 
-```bash
-python3 bronze_ingest.py
+El pipeline se ejecuta desde un solo punto de entrada. La función `main()` en `procesar_lakehouse.py` orquesta todo el flujo:
+
+```
+main()
+ ├── 1. verificar_entorno()     → ¿PySpark instalado?
+ ├── 2. crear_spark()           → SparkSession en YARN (3 executors)
+ ├── 3. etapa2_silver(spark)    → Bronze → Silver (2.9M registros)
+ └── 4. etapa3_gold(spark, df)  → Silver → Gold (3 KPIs en CSV)
 ```
 
-### 2. Pipeline Silver + Gold
+### Paso a paso
 
 ```bash
+# 1. Ingesta a Bronze (solo la primera vez)
+python3 bronze_ingest.py
+
+# 2. Pipeline Silver + Gold sobre YARN
 HADOOP_CONF_DIR=/opt/hadoop/etc/hadoop \
 YARN_CONF_DIR=/opt/hadoop/etc/hadoop \
 SPARK_LOCAL_IP=10.61.61.105 \
 spark-submit --master yarn --deploy-mode client procesar_lakehouse.py
-```
 
-### 3. Dashboard
-
-```bash
+# 3. Dashboard
 streamlit run dashboard_kpis.py --server.address 10.61.61.105
 ```
+
+### Lo que ocurre en YARN al ejecutar spark-submit
+
+| Momento | Estado | Contenedores |
+|---------|:------:|:------------:|
+| `spark-submit` envía la app | `ACCEPTED` | 0 |
+| ResourceManager asigna AM | `RUNNING` | 1 (ApplicationMaster) |
+| AM negocia 3 executors | `RUNNING` | 4 (AM + 3 executors) |
+| Transformaciones en paralelo | `RUNNING` | 4 |
+| `spark.stop()` | `FINISHED` | 0 |
 
 ---
 
@@ -359,21 +376,17 @@ streamlit run dashboard_kpis.py --server.address 10.61.61.105
 ```
 /home/leo/Documentos/Big data/
 ├── bronze_ingest.py              # Fase 2 — Ingesta a Bronze
-├── procesar_lakehouse.py         # Fase 3+4 — Silver + Gold
+├── procesar_lakehouse.py         # Fase 3+4 — Silver + Gold (pipeline completo)
 ├── dashboard_kpis.py             # Fase 5 — Dashboard
 ├── README.md                     # Este archivo
 └── docs/
-    ├── fase_0_instalacion_cluster.md
-    ├── fase_1_reparacion_cluster.md
-    ├── fase_2_ingesta_bronze.md
-    ├── fase_3_limpieza_silver.md
-    ├── fase_4_kpis_gold.md
-    ├── fase_5_dashboard_kpis.md
-    ├── fase_6_monitoreo_troubleshooting.md
-    ├── bitacora_pipeline.md
-    ├── documentacion_completa.md
-    ├── hadoop_cluster_info.md
-    └── instalacion_hadoop_zerotier.md
+    ├── fase_0_instalacion_cluster.md   # ZeroTier + Hadoop + Spark
+    ├── fase_1_reparacion_cluster.md    # Diagnóstico nodo isait
+    ├── fase_2_ingesta_bronze.md        # Bronze: ingesta de datos
+    ├── fase_3_limpieza_silver.md       # Silver: limpieza con PySpark
+    ├── fase_4_kpis_gold.md             # Gold: KPIs + pipeline completo
+    ├── fase_5_dashboard_kpis.md        # Dashboard Streamlit
+    └── fase_6_monitoreo_troubleshooting.md  # Monitoreo + errores
 ```
 
 ---
