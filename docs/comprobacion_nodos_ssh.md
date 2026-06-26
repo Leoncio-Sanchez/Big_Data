@@ -2,7 +2,7 @@
 
 ## Objetivo
 
-Verificar y configurar el acceso SSH desde el nodo master (`leo`) hacia los 4 workers del cluster ZeroTier, permitiendo arrancar y detener los demonios Hadoop de forma remota sin intervención manual en cada nodo.
+Verificar y configurar el acceso SSH desde el nodo master (`leo`) hacia los 3 workers del cluster ZeroTier, permitiendo arrancar y detener los demonios Hadoop de forma remota sin intervención manual en cada nodo.
 
 ---
 
@@ -13,9 +13,10 @@ Verificar y configurar el acceso SSH desde el nodo master (`leo`) hacia los 4 wo
 | `leo` (master) | 10.61.61.105 | `leo` | `leo321` |
 | `XUBUNTU` | 10.61.61.12 | `hadoop` | `xubuntu` |
 | `DEBIAN` | 10.61.61.65 | `hadoop` | `ADMIN123` |
-| `isait-VirtualBox` | 10.61.61.7 | `isait` | `Isait@2001` |
+| 
 
-> **Nota:** Los servicios Hadoop en XUBUNTU y DEBIAN corren bajo `hadoop`. En isait-VirtualBox corren bajo `isait`. El master usa `leo`.
+
+> **Nota:** Los servicios Hadoop en los workers corren bajo el usuario `hadoop`. El master usa `leo`.
 
 ---
 
@@ -24,13 +25,13 @@ Verificar y configurar el acceso SSH desde el nodo master (`leo`) hacia los 4 wo
 ### 2.1 Ping (capa de red ZeroTier)
 
 ```bash
-# Desde leo, verificar que los 4 workers responden
+# Desde leo, verificar que los 3 workers responden
 ping -c 2 -W 1 10.61.61.12   # XUBUNTU
 ping -c 2 -W 1 10.61.61.65   # DEBIAN
 ping -c 2 -W 1 10.61.61.7    # isait-VirtualBox
 ```
 
-**Esperado:** 0% packet loss en los 4. Si hay pérdida >50%, revisar ZeroTier.
+**Esperado:** 0% packet loss en los 3. Si hay pérdida >50%, revisar ZeroTier.
 
 ### 2.2 SSH con contraseña (capa de aplicación)
 
@@ -40,12 +41,9 @@ sshpass -p 'xubuntu' ssh -o StrictHostKeyChecking=no hadoop@10.61.61.12 "hostnam
 
 # DEBIAN → password: ADMIN123
 sshpass -p 'ADMIN123' ssh -o StrictHostKeyChecking=no hadoop@10.61.61.65 "hostname"
-
-# isait-VirtualBox → password: Isait@2001
-sshpass -p 'Isait@2001' ssh -o StrictHostKeyChecking=no isait@10.61.61.7 "hostname"
 ```
 
-**Esperado:** Retorna el hostname del worker (`XUBUNTU`, `DEBIAN`, `isait-VirtualBox`). Si retorna `Permission denied`, verificar que la contraseña no haya cambiado.
+**Esperado:** Retorna el hostname del worker (`XUBUNTU`, `DEBIAN`). Si retorna `Permission denied`, verificar que la contraseña no haya cambiado.
 
 ### 2.3 Estado de procesos Java en workers
 
@@ -55,9 +53,6 @@ sshpass -p 'xubuntu' ssh -o StrictHostKeyChecking=no hadoop@10.61.61.12 \
   "ps aux | grep -E '(DataNode|NodeManager|NameNode|ResourceManager)' | grep -v grep"
 
 sshpass -p 'ADMIN123' ssh -o StrictHostKeyChecking=no hadoop@10.61.61.65 \
-  "ps aux | grep -E '(DataNode|NodeManager|NameNode|ResourceManager)' | grep -v grep"
-
-sshpass -p 'Isait@2001' ssh -o StrictHostKeyChecking=no isait@10.61.61.7 \
   "ps aux | grep -E '(DataNode|NodeManager|NameNode|ResourceManager)' | grep -v grep"
 ```
 
@@ -84,9 +79,6 @@ sshpass -p 'xubuntu' ssh-copy-id -o StrictHostKeyChecking=no hadoop@10.61.61.12
 
 # DEBIAN
 sshpass -p 'ADMIN123' ssh-copy-id -o StrictHostKeyChecking=no hadoop@10.61.61.65
-
-# isait-VirtualBox
-sshpass -p 'Isait@2001' ssh-copy-id -o StrictHostKeyChecking=no isait@10.61.61.7
 ```
 
 ### 3.3 Verificar acceso sin contraseña
@@ -94,7 +86,6 @@ sshpass -p 'Isait@2001' ssh-copy-id -o StrictHostKeyChecking=no isait@10.61.61.7
 ```bash
 ssh hadoop@10.61.61.12 "hostname"   # Debe retornar XUBUNTU sin pedir password
 ssh hadoop@10.61.61.65 "hostname"   # Debe retornar DEBIAN sin pedir password
-ssh isait@10.61.61.7 "hostname"     # Debe retornar isait-VirtualBox sin pedir password
 ```
 
 ---
@@ -109,9 +100,6 @@ ssh hadoop@10.61.61.12 "export JAVA_HOME=/opt/hadoop/jdk && /opt/hadoop/bin/hdfs
 
 # DEBIAN
 ssh hadoop@10.61.61.65 "/opt/hadoop/bin/hdfs --daemon start datanode"
-
-# isait-VirtualBox
-ssh isait@10.61.61.7 "export JAVA_HOME=/opt/hadoop/jdk && /opt/hadoop/bin/hdfs --daemon start datanode"
 ```
 
 ### 4.2 DataNode en workers (parada manual)
@@ -119,7 +107,6 @@ ssh isait@10.61.61.7 "export JAVA_HOME=/opt/hadoop/jdk && /opt/hadoop/bin/hdfs -
 ```bash
 ssh hadoop@10.61.61.12 "/opt/hadoop/bin/hdfs --daemon stop datanode"
 ssh hadoop@10.61.61.65 "/opt/hadoop/bin/hdfs --daemon stop datanode"
-ssh isait@10.61.61.7 "/opt/hadoop/bin/hdfs --daemon stop datanode"
 ```
 
 ### 4.3 NodeManager en workers (si se usa YARN)
@@ -127,7 +114,6 @@ ssh isait@10.61.61.7 "/opt/hadoop/bin/hdfs --daemon stop datanode"
 ```bash
 ssh hadoop@10.61.61.12 "/opt/hadoop/bin/yarn --daemon start nodemanager"
 ssh hadoop@10.61.61.65 "/opt/hadoop/bin/yarn --daemon start nodemanager"
-ssh isait@10.61.61.7 "export JAVA_HOME=/opt/hadoop/jdk && /opt/hadoop/bin/yarn --daemon start nodemanager"
 ```
 
 ---
@@ -141,7 +127,7 @@ hdfs dfsadmin -report
 ```
 
 **Revisar:**
-- `Live datanodes` debe mostrar 4 nodos (leo, XUBUNTU, DEBIAN, isait-VirtualBox)
+- `Live datanodes` debe mostrar 3 nodos (leo, XUBUNTU, DEBIAN)
 - `Under replicated blocks` debe ser 0
 - `Blocks with corrupt replicas` debe ser 0
 - `DFS Remaining` debe mostrar espacio disponible
@@ -154,15 +140,13 @@ hdfs dfsadmin -report 2>&1 | grep -E "(Live datanodes|Name:|Hostname:|Under repl
 
 **Salida esperada:**
 ```
-Live datanodes (4):
+Live datanodes (3):
 Name: 10.61.61.105:9866 (10.61.61.105)
 Hostname: leo
 Name: 10.61.61.12:9866 (XUBUNTU)
 Hostname: XUBUNTU
 Name: 10.61.61.65:9866 (DEBIAN)
 Hostname: DEBIAN.myguest.virtualbox.org
-Name: 10.61.61.7:9866 (isait-VirtualBox)
-Hostname: isait-VirtualBox
 Under replicated blocks: 0
 ```
 
@@ -205,20 +189,16 @@ sudo chown -R leo:leo /opt/hadoop/logs
 **Diagnóstico:**
 ```bash
 # 1. Probar conectividad
-ping -c 2 10.61.61.12        # XUBUNTU
-ping -c 2 10.61.61.65        # DEBIAN
-ping -c 2 10.61.61.7         # isait-VirtualBox
+ping -c 2 10.61.61.12
 
-# 2. Probar SSH (XUBUNTU)
+# 2. Probar SSH
 ssh hadoop@10.61.61.12 "ps aux | grep DataNode | grep -v grep"
+
 # 3. Si no corre, arrancarlo manualmente
 ssh hadoop@10.61.61.12 "export JAVA_HOME=/opt/hadoop/jdk && /opt/hadoop/bin/hdfs --daemon start datanode"
+
 # 4. Revisar logs del worker
 ssh hadoop@10.61.61.12 "tail -30 /opt/hadoop/logs/hadoop-hadoop-datanode-*.log"
-
-# Para isait-VirtualBox (usuario isait, data dir en /opt/hadoop/datos/datanode)
-ssh isait@10.61.61.7 "ps aux | grep DataNode | grep -v grep"
-ssh isait@10.61.61.7 "export JAVA_HOME=/opt/hadoop/jdk && /opt/hadoop/bin/hdfs --daemon start datanode"
 ```
 
 ### 6.3 `Permission denied (publickey,password)` en SSH
@@ -236,7 +216,6 @@ ssh isait@10.61.61.7 "export JAVA_HOME=/opt/hadoop/jdk && /opt/hadoop/bin/hdfs -
 # Verificar espacio en cada worker
 ssh hadoop@10.61.61.12 "df -h /opt/hadoopdata"
 ssh hadoop@10.61.61.65 "df -h /opt/hadoopdata"
-ssh isait@10.61.61.7 "df -h /opt/hadoop/datos"
 
 # Forzar re-replicación (si el DataNode ya está corriendo)
 hdfs dfsadmin -setBalancerBandwidth 104857600  # 100 MB/s
@@ -258,12 +237,8 @@ sudo chown -R $(whoami):$(whoami) /opt/hadoop/logs
 
 **Solución:**
 ```bash
-# En el master (leo) — directorios estándar
 sudo chown -R $(whoami):$(whoami) /opt/hadoopdata/hdfs/namenode
 sudo chown -R $(whoami):$(whoami) /opt/hadoopdata/hdfs/datanode
-
-# En isait-VirtualBox — directorio alternativo
-# sudo chown -R isait:isait /opt/hadoop/datos/datanode
 ```
 
 ---
@@ -283,9 +258,8 @@ done
 
 echo ""
 echo "=== 2. SSH a workers ==="
-ssh hadoop@10.61.61.12 "hostname" 2>/dev/null && echo "  XUBUNTU         ✅" || echo "  XUBUNTU         ❌"
-ssh hadoop@10.61.61.65 "hostname" 2>/dev/null && echo "  DEBIAN          ✅" || echo "  DEBIAN          ❌"
-ssh isait@10.61.61.7 "hostname" 2>/dev/null && echo "  isait-VirtualBox ✅" || echo "  isait-VirtualBox ❌"
+ssh hadoop@10.61.61.12 "hostname" 2>/dev/null && echo "  XUBUNTU ✅" || echo "  XUBUNTU ❌"
+ssh hadoop@10.61.61.65 "hostname" 2>/dev/null && echo "  DEBIAN  ✅" || echo "  DEBIAN  ❌"
 
 echo ""
 echo "=== 3. DataNodes vivos ==="
@@ -299,36 +273,16 @@ hdfs dfsadmin -report 2>/dev/null | grep "Under replicated blocks"
 
 ---
 
-## 8. Archivo Workers (para `start-dfs.sh`)
-
-El archivo `/opt/hadoop/etc/hadoop/workers` define qué nodos administra `start-dfs.sh`. Debe contener las IPs de los 4 nodos:
-
-```bash
-# Editar (requiere sudo — el archivo pertenece a hadoop)
-sudo tee /opt/hadoop/etc/hadoop/workers << 'EOF'
-localhost
-10.61.61.12
-10.61.61.65
-10.61.61.7
-EOF
-```
-
-> **Nota:** Si `10.61.61.7` no está en el archivo, `start-dfs.sh` no intentará arrancar el DataNode en isait-VirtualBox. En ese caso habrá que arrancarlo manualmente con SSH (sección 4.1).
-
----
-
-## 9. Resumen de Configuración Actual
+## 8. Resumen de Configuración Actual
 
 | Parámetro | Valor |
 |:----------|:------|
 | NameNode RPC | `hdfs://10.61.61.105:9000` |
 | NameNode HTTP | `http://10.61.61.105:9870` |
 | Workers file | `/opt/hadoop/etc/hadoop/workers` |
-| Workers activos | `localhost`, `10.61.61.12`, `10.61.61.65`, `10.61.61.7` |
+| Workers activos | `localhost`, `10.61.61.12`, `10.61.61.65` |
 | JAVA_HOME (XUBUNTU) | `/opt/hadoop/jdk` |
 | JAVA_HOME (DEBIAN) | Sistema (en PATH) |
-| JAVA_HOME (isait-VirtualBox) | `/opt/hadoop/jdk` |
 | JAVA_HOME (leo) | Sistema (en PATH) |
-| Usuario servicios Hadoop | `hadoop` (XUBUNTU, DEBIAN), `isait` (isait-VirtualBox), `leo` (master) |
-| Data dir isait-VirtualBox | `/opt/hadoop/datos/datanode` |
+| Usuario servicios Hadoop | `hadoop` (workers), `leo` (master) |
 | Red ZeroTier | `10.61.61.0/24` — interfaz `ztcdchsekn` |
