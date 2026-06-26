@@ -11,9 +11,9 @@ Desplegar un cluster Hadoop 3.3.6 distribuido en 4 nodos interconectados via Zer
 | Nodo | Hostname | IP ZeroTier | RAM | Roles |
 |:----:|----------|:-----------:|:---:|-------|
 | 1 | `leo` | 10.61.61.105 | 8GB+ | NameNode, ResourceManager, DataNode, NodeManager |
-| 2 | `XUBUNTU` | 10.61.61.12 | 8GB+ | DataNode, NodeManager |
-| 3 | `DEBIAN.myguest.virtualbox.org` | 10.61.61.65 | 8GB+ | DataNode, NodeManager |
-| 4 | `isait-VirtualBox` | 10.61.61.7 | 8GB+ | DataNode, NodeManager |
+| 2 | `XUBUNTU` | 10.61.61.12 | 4GB+ | DataNode, NodeManager |
+| 3 | `DEBIAN.myguest.virtualbox.org` | 10.61.61.65 | 4GB+ | DataNode, NodeManager |
+| 4 | `isait-VirtualBox` | 10.61.61.7 | 4GB+ | DataNode, NodeManager |
 
 **Usuario Hadoop:** `hadoop` (en todos los nodos, para servicios)
 **Usuario operador:** `leo` (en master)
