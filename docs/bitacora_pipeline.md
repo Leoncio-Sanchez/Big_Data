@@ -9,15 +9,14 @@
 ## Índice
 
 1. [Estado inicial del proyecto](#1-estado-inicial-del-proyecto)
-2. [Diagnóstico y reparación del nodo perdido (isait-VirtualBox)](#2-diagnóstico-y-reparación-del-nodo-perdido-isait-virtualbox)
-3. [Corrección de bugs en el código PySpark](#3-corrección-de-bugs-en-el-código-pyspark)
-4. [Configuración de variables de entorno Hadoop/Spark](#4-configuración-de-variables-de-entorno-hadoopspark)
-5. [ETAPA 1: Ingesta a Capa Bronce](#5-etapa-1-ingesta-a-capa-bronce)
-6. [Corrección de permisos HDFS](#6-corrección-de-permisos-hdfs)
-7. [ETAPA 2+3: Ejecución del pipeline Silver + Gold](#7-etapa-23-ejecución-del-pipeline-silver--gold)
-8. [Spark History Server](#8-spark-history-server)
-9. [Resultados finales](#9-resultados-finales)
-10. [Lecciones aprendidas](#10-lecciones-aprendidas)
+2. [Corrección de bugs en el código PySpark](#2-corrección-de-bugs-en-el-código-pyspark)
+3. [Configuración de variables de entorno Hadoop/Spark](#3-configuración-de-variables-de-entorno-hadoopspark)
+4. [ETAPA 1: Ingesta a Capa Bronce](#4-etapa-1-ingesta-a-capa-bronce)
+5. [Corrección de permisos HDFS](#5-corrección-de-permisos-hdfs)
+6. [ETAPA 2+3: Ejecución del pipeline Silver + Gold](#6-etapa-23-ejecución-del-pipeline-silver--gold)
+7. [Spark History Server](#7-spark-history-server)
+8. [Resultados finales](#8-resultados-finales)
+9. [Lecciones aprendidas](#9-lecciones-aprendidas)
 
 ---
 
@@ -43,164 +42,11 @@
 | 3 | `DEBIAN.myguest.virtualbox.org` | 10.61.61.65 | DataNode + NodeManager |
 | 4 | `isait-VirtualBox` | 10.61.61.7 | DataNode + NodeManager |
 
-### 1.3 Primer chequeo: YARN solo muestra 3 nodos
-
-```bash
-leo@leo:~$ yarn node -list
-Total Nodes:3
-         Node-Id             Node-State    Node-Http-Address
-       leo:40135                RUNNING    leo:8042
-   XUBUNTU:39313                RUNNING    XUBUNTU:8042
-DEBIAN...:40657                 RUNNING    DEBIAN...:8042
-```
-
-> ❌ **Problema detectado:** `isait-VirtualBox` no aparece. El clúster opera al 75% de capacidad.
-
 ---
 
-## 2. Diagnóstico y reparación del nodo perdido (isait-VirtualBox)
+## 2. Corrección de bugs en el código PySpark
 
-### 2.1 Verificación de conectividad ZeroTier
-
-```bash
-ping -c 3 10.61.61.7
-```
-
-**Resultado:** ✅ 3/3 paquetes respondidos (latencia 17-237ms). La VPN funciona.  
-**Interpretación:** El problema NO es de red. La máquina está viva.
-
-### 2.2 Verificación de servicios en isait
-
-```bash
-curl -s --connect-timeout 5 http://10.61.61.7:8042/node
-```
-
-**Resultado:** ❌ `NO_RESPONDE`. El NodeManager no está escuchando en el puerto HTTP 8042.
-
-```bash
-hdfs dfsadmin -report | grep -i isait
-```
-
-**Resultado:** ❌ Sin resultados. El DataNode de isait tampoco está registrado en HDFS.
-
-### 2.3 Descubrimiento de la causa raíz (vía SSH)
-
-**Conexión SSH:**
-```bash
-sshpass -p 'Isait@2001' ssh isait@10.61.61.7
-```
-- Usuario: `isait`
-- Contraseña: `Isait@2001`
-
-**Verificación de procesos:**
-```bash
-ps aux | grep -E 'datanode|nodemanager'
-```
-
-**Resultado:** Solo aparecía el NodeManager (PID 2873) ejecutándose como usuario `isait`. El **DataNode estaba detenido**.
-
-### 2.4 Análisis de logs del ResourceManager en leo
-
-```bash
-grep -i "10.61.61.7\|isait" /opt/hadoop/logs/hadoop-hadoop-resourcemanager-leo.log | tail -30
-```
-
-**Hallazgo clave 🔑:**
-```
-20:03:43 INFO  ... NodeManager from isait-VirtualBox(cmPort: 44621 httpPort: 8042)
-                 registered with capability: <memory:8192, vCores:8>
-20:03:43 INFO  ... isait-VirtualBox:44621 Node Transitioned from NEW to UNHEALTHY
-20:03:43 ERROR ... Attempting to remove non-existent node isait-VirtualBox:44621
-```
-
-> **Interpretación:** El ResourceManager **sí recibía** los heartbeats de isait, pero inmediatamente lo marcaba como `UNHEALTHY`. Por eso nunca aparecía en `yarn node -list`.
-
-### 2.5 Análisis de logs del NodeManager en isait
-
-```bash
-tail -100 /opt/hadoop/logs/hadoop-isait-nodemanager*.log | grep -E 'ERROR|WARN'
-```
-
-**Causa raíz confirmada 🔴:**
-```
-ERROR ... LocalDirsHandlerService: Most of the disks failed.
-       1/1 log-dirs have errors: [/opt/hadoop/logs/userlogs:
-       Directory is not writable: /opt/hadoop/logs/userlogs]
-
-WARN  ... NodeManager configured with 8 GB physical memory
-       allocated to containers, which is more than 80% of the
-       total physical memory available (3.8 GB). Thrashing might happen.
-```
-
-### 2.6 Verificación de permisos
-
-```bash
-ls -la /opt/hadoop/logs/
-```
-
-```
-drwxr-xr-x  2 hadoop hadoop  /opt/hadoop/logs/userlogs    ← solo hadoop puede escribir
-drwxrwxrwx  3 hadoop hadoop  /opt/hadoop/logs/             ← world-writable
-```
-
-| Componente | Dueño esperado | Proceso corriendo como | ¿Coinciden? |
-|------------|:---:|:---:|:---:|
-| `/opt/hadoop/` | `hadoop:hadoop` | — | — |
-| NodeManager | — | `isait` | ❌ |
-| DataNode | — | (detenido) | ❌ |
-
-> **Problema de fondo:** El NodeManager se ejecutaba como usuario `isait`, pero todos los directorios y archivos de Hadoop pertenecen a `hadoop:hadoop`. El directorio `userlogs` (`drwxr-xr-x`) solo permitía escritura al dueño (`hadoop`), y `isait` no podía escribir → YARN marcaba el nodo como `UNHEALTHY`.
-
-### 2.7 Reparación
-
-**Paso 2.7.1 — Arreglar permisos de userlogs:**
-```bash
-echo 'Isait@2001' | sudo -S chmod 777 /opt/hadoop/logs/userlogs
-```
-
-**Paso 2.7.2 — Matar el NodeManager viejo (corriendo como isait):**
-```bash
-echo 'Isait@2001' | sudo -S pkill -f proc_nodemanager
-```
-
-**Paso 2.7.3 — Iniciar DataNode como usuario hadoop:**
-```bash
-echo 'Isait@2001' | sudo -S -u hadoop /opt/hadoop/bin/hdfs --daemon start datanode
-```
-
-**Paso 2.7.4 — Iniciar NodeManager como usuario hadoop:**
-```bash
-echo 'Isait@2001' | sudo -S -u hadoop /opt/hadoop/bin/yarn --daemon start nodemanager
-```
-
-**Paso 2.7.5 — Verificar procesos en isait:**
-```bash
-ps aux | grep -E 'proc_datanode|proc_nodemanager' | grep -v grep
-```
-```
-hadoop  3698  ... -Dproc_datanode    ... DataNode      ← ahora como hadoop ✅
-hadoop  3846  ... -Dproc_nodemanager ... NodeManager   ← ahora como hadoop ✅
-```
-
-### 2.8 Verificación final del clúster
-
-```bash
-leo@leo:~$ yarn node -list
-Total Nodes:4
-         Node-Id             Node-State    Node-Http-Address
-       leo:40135                RUNNING    leo:8042
-   XUBUNTU:39313                RUNNING    XUBUNTU:8042
-DEBIAN...:40657                 RUNNING    DEBIAN...:8042
-isait-VirtualBox:36905          RUNNING    isait-VirtualBox:8042   ✅ RECUPERADO
-```
-
-> ✅ **4/4 nodos RUNNING.** HDFS reporta 529 GB capacidad, 149 GB disponible, 0 bloques corruptos.
-
----
-
-## 3. Corrección de bugs en el código PySpark
-
-### 3.1 Bug #1: `deployMode()` no es un método del Builder
+### 2.1 Bug #1: `deployMode()` no es un método del Builder
 
 **Síntoma:**
 ```
@@ -221,7 +67,7 @@ AttributeError: 'Builder' object has no attribute 'deployMode'
 # deployMode se pasa por CLI: spark-submit --deploy-mode client
 ```
 
-### 3.2 Mejora: Event Log para Spark History Server
+### 2.2 Mejora: Event Log para Spark History Server
 
 Se añadió configuración para que los jobs escriban logs de eventos que el History Server pueda mostrar:
 
@@ -232,9 +78,9 @@ Se añadió configuración para que los jobs escriban logs de eventos que el His
 
 ---
 
-## 4. Configuración de variables de entorno Hadoop/Spark
+## 3. Configuración de variables de entorno Hadoop/Spark
 
-### 4.1 Error inicial
+### 3.1 Error inicial
 
 ```bash
 leo@leo:~$ spark-submit --master yarn --deploy-mode client procesar_lakehouse.py
@@ -244,7 +90,7 @@ or YARN_CONF_DIR must be set in the environment.
 
 **Causa:** `spark-submit` necesita saber dónde están los archivos de configuración de Hadoop (`core-site.xml`, `yarn-site.xml`, `hdfs-site.xml`).
 
-### 4.2 Solución: variables de entorno + IP ZeroTier
+### 3.2 Solución: variables de entorno + IP ZeroTier
 
 **Variables requeridas cada vez que se ejecuta spark-submit:**
 
@@ -261,7 +107,7 @@ using 10.70.84.39 instead (on interface wlo1)
 ```
 Spark detectaba la IP de la WiFi (`wlo1`) en vez de ZeroTier. `SPARK_LOCAL_IP` fuerza la IP correcta.
 
-### 4.3 Persistencia en `~/.bashrc`
+### 3.3 Persistencia en `~/.bashrc`
 
 Para no escribir las variables cada vez, se añadieron al final de `~/.bashrc`:
 
@@ -274,9 +120,9 @@ export SPARK_LOCAL_IP=10.61.61.105
 
 ---
 
-## 5. ETAPA 1: Ingesta a Capa Bronce
+## 4. ETAPA 1: Ingesta a Capa Bronce
 
-### 5.1 Problema inicial
+### 4.1 Problema inicial
 
 **`bronze_ingest.py`** en disco todavía tenía la versión antigua:
 - ❌ Dataset: `Online Retail.xlsx` desde UCI (datos equivocados)
@@ -288,21 +134,21 @@ export SPARK_LOCAL_IP=10.61.61.105
 - ✅ Librería: `hdfs` (WebHDFS via HTTP/REST)
 - ✅ Puerto: `9870` (HTTP, accesible desde Python)
 
-### 5.2 Actualización del script
+### 4.2 Actualización del script
 
 Se reescribió `bronze_ingest.py` con:
 - URL correcta: `https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_2023-01.parquet`
 - WebHDFS via `hdfs.InsecureClient("http://leo:9870", user="hadoop")`
 - Streaming de descarga en chunks de 1MB
 
-### 5.3 Instalación de dependencias
+### 4.3 Instalación de dependencias
 
 ```bash
 pip install --break-system-packages hdfs
 ```
 > Nota: Debian 13 usa entornos Python gestionados externamente (PEP 668). Se requirió `--break-system-packages`.
 
-### 5.4 Corrección de permisos octal en WebHDFS
+### 4.4 Corrección de permisos octal en WebHDFS
 
 **Error:**
 ```
@@ -322,7 +168,7 @@ client.makedirs(hdfs_dir, permission="755")
 client.write(..., permission="644")
 ```
 
-### 5.5 Ejecución exitosa
+### 4.5 Ejecución exitosa
 
 ```bash
 python3 bronze_ingest.py
@@ -335,7 +181,7 @@ INFO | Subiendo a HDFS: → /lakehouse/bronze/yellow_tripdata_2023-01.parquet
 INFO | ETAPA 1 finalizada ✅
 ```
 
-### 5.6 Verificación
+### 4.6 Verificación
 
 ```bash
 hdfs dfs -ls /lakehouse/bronze/
@@ -352,9 +198,9 @@ hdfs dfs -ls /lakehouse/bronze/
 
 ---
 
-## 6. Corrección de permisos HDFS
+## 5. Corrección de permisos HDFS
 
-### 6.1 Error en ETAPA 2: Permission denied
+### 5.1 Error en ETAPA 2: Permission denied
 
 ```
 org.apache.hadoop.security.AccessControlException:
@@ -363,7 +209,7 @@ Permission denied: user=leo, access=WRITE, inode="/lakehouse":hadoop:supergroup:
 
 **Causa:** El directorio `/lakehouse` fue creado por el usuario `hadoop` (vía WebHDFS en `bronze_ingest.py`). Spark se ejecuta como usuario `leo`, que no es dueño ni pertenece al grupo `supergroup`. Los permisos `755` impiden que `leo` cree subdirectorios.
 
-### 6.2 Solución
+### 5.2 Solución
 
 ```bash
 # Como usuario hadoop (dueño del directorio):
@@ -381,9 +227,9 @@ drwxrwxrwx   /lakehouse/gold      ← creado para la etapa 3
 
 ---
 
-## 7. ETAPA 2+3: Ejecución del pipeline Silver + Gold
+## 6. ETAPA 2+3: Ejecución del pipeline Silver + Gold
 
-### 7.1 Comando de ejecución
+### 6.1 Comando de ejecución
 
 ```bash
 cd "/home/leo/Documentos/Big data"
@@ -393,7 +239,7 @@ SPARK_LOCAL_IP=10.61.61.105 \
 spark-submit --master yarn --deploy-mode client procesar_lakehouse.py
 ```
 
-### 7.2 Trazado de ejecución
+### 6.2 Trazado de ejecución
 
 ```
 ETAPA                         | TIEMPO    | RESULTADO
@@ -414,7 +260,7 @@ ETAPA                         | TIEMPO    | RESULTADO
    TIEMPO TOTAL               | ~3.5 min  |   ÉXITO COMPLETO
 ```
 
-### 7.3 Logs clave de la ejecución
+### 6.3 Logs clave de la ejecución
 
 ```
 2026-06-25 20:47:31 | Registros leídos desde Bronze: 3066766
@@ -426,7 +272,7 @@ ETAPA                         | TIEMPO    | RESULTADO
 2026-06-25 20:51:04 | ✓ PIPELINE COMPLETO: Bronze → Silver → Gold
 ```
 
-### 7.4 Estructura resultante en HDFS
+### 6.4 Estructura resultante en HDFS
 
 ```
 /lakehouse/
@@ -454,9 +300,9 @@ ETAPA                         | TIEMPO    | RESULTADO
 
 ---
 
-## 8. Spark History Server
+## 7. Spark History Server
 
-### 8.1 Configuración
+### 7.1 Configuración
 
 Se creó `/tmp/spark-defaults.conf`:
 ```properties
@@ -465,7 +311,7 @@ spark.eventLog.dir=file:///tmp/spark-events
 spark.history.fs.logDirectory=file:///tmp/spark-events
 ```
 
-### 8.2 Inicio del servicio
+### 7.2 Inicio del servicio
 
 ```bash
 export SPARK_HOME=/home/leo/.local/lib/python3.13/site-packages/pyspark
@@ -473,7 +319,7 @@ mkdir -p /tmp/spark-events
 bash $SPARK_HOME/sbin/start-history-server.sh --properties-file /tmp/spark-defaults.conf
 ```
 
-### 8.3 URLs de monitoreo Spark
+### 7.3 URLs de monitoreo Spark
 
 | Interfaz | URL | Disponibilidad |
 |----------|-----|----------------|
@@ -481,7 +327,7 @@ bash $SPARK_HOME/sbin/start-history-server.sh --properties-file /tmp/spark-defau
 | **Spark History Server** | `http://localhost:18080` | Jobs pasados y presentes (con event log) |
 | **YARN ResourceManager** | `http://localhost:8088` | Todas las apps (Spark y no-Spark) |
 
-### 8.4 Web UIs del clúster Hadoop
+### 7.4 Web UIs del clúster Hadoop
 
 | Servicio | URL | ¿Qué muestra? |
 |----------|-----|---------------|
@@ -503,9 +349,9 @@ bash $SPARK_HOME/sbin/start-history-server.sh --properties-file /tmp/spark-defau
 
 ---
 
-## 9. Resultados finales
+## 8. Resultados finales
 
-### 9.1 KPIs generados (Capa Oro)
+### 8.1 KPIs generados (Capa Oro)
 
 | KPI | Descripción | Filas | Columnas |
 |-----|-------------|:-----:|----------|
@@ -513,7 +359,7 @@ bash $SPARK_HOME/sbin/start-history-server.sh --properties-file /tmp/spark-defau
 | ⚙️ **kpi_operativo** | Duración y distancia promedio por nº de pasajeros | 8 | `passenger_count`, `duracion_promedio_min`, `distancia_promedio_km`, `total_viajes` |
 | 📍 **kpi_demanda** | Total viajes por zona de recogida (descendente) | 254 | `PULocationID`, `total_viajes` |
 
-### 9.2 Métricas del pipeline
+### 8.2 Métricas del pipeline
 
 | Indicador | Valor |
 |-----------|-------|
@@ -525,7 +371,7 @@ bash $SPARK_HOME/sbin/start-history-server.sh --properties-file /tmp/spark-defau
 | Workers utilizados | 3 × (4 GB RAM, 2 cores) |
 | Shuffle partitions | 12 |
 
-### 9.3 Estado del clúster al finalizar
+### 8.3 Estado del clúster al finalizar
 
 | Indicador | Estado |
 |-----------|--------|
@@ -537,22 +383,21 @@ bash $SPARK_HOME/sbin/start-history-server.sh --properties-file /tmp/spark-defau
 
 ---
 
-## 10. Lecciones aprendidas
+## 9. Lecciones aprendidas
 
-### 10.1 Problemas encontrados y sus soluciones
+### 9.1 Problemas encontrados y sus soluciones
 
 | # | Problema | Causa raíz | Solución |
 |---|----------|-----------|----------|
-| 1 | isait no aparecía en YARN | NodeManager corría como `isait` sin permisos de escritura en `userlogs` | Ejecutar servicios como `hadoop` + `chmod 777 userlogs` |
-| 2 | `deployMode()` no existe | PySpark Builder no tiene ese método | Se pasa por CLI (`--deploy-mode client`) |
-| 3 | `HADOOP_CONF_DIR` no definido | Spark no encuentra configs YARN | Exportar variable con ruta a `/opt/hadoop/etc/hadoop` |
-| 4 | Spark usa IP WiFi en vez de ZeroTier | Hostname `leo` → loopback → WiFi | `export SPARK_LOCAL_IP=10.61.61.105` |
-| 5 | Archivo no existe en HDFS | `bronze_ingest.py` no se había ejecutado | Actualizar script + instalar `hdfs` + ejecutar |
-| 6 | Permission denied al escribir Silver/Gold | `/lakehouse` creado por `hadoop`, Spark corre como `leo` | `hdfs dfs -chmod 777 /lakehouse` como usuario `hadoop` |
-| 7 | Error `permission` octal en WebHDFS | La librería `hdfs` espera strings (`"755"`), no enteros (`0o755`) | Usar strings para permisos |
-| 8 | History Server vacío | Jobs anteriores sin `spark.eventLog.enabled` | Añadir config al código Spark |
+| 1 | `deployMode()` no existe | PySpark Builder no tiene ese método | Se pasa por CLI (`--deploy-mode client`) |
+| 2 | `HADOOP_CONF_DIR` no definido | Spark no encuentra configs YARN | Exportar variable con ruta a `/opt/hadoop/etc/hadoop` |
+| 3 | Spark usa IP WiFi en vez de ZeroTier | Hostname `leo` → loopback → WiFi | `export SPARK_LOCAL_IP=10.61.61.105` |
+| 4 | Archivo no existe en HDFS | `bronze_ingest.py` no se había ejecutado | Actualizar script + instalar `hdfs` + ejecutar |
+| 5 | Permission denied al escribir Silver/Gold | `/lakehouse` creado por `hadoop`, Spark corre como `leo` | `hdfs dfs -chmod 777 /lakehouse` como usuario `hadoop` |
+| 6 | Error `permission` octal en WebHDFS | La librería `hdfs` espera strings (`"755"`), no enteros (`0o755`) | Usar strings para permisos |
+| 7 | History Server vacío | Jobs anteriores sin `spark.eventLog.enabled` | Añadir config al código Spark |
 
-### 10.2 Comandos esenciales para el día a día
+### 9.2 Comandos esenciales para el día a día
 
 ```bash
 # Ver nodos YARN
@@ -581,7 +426,7 @@ spark-submit --master yarn --deploy-mode client procesar_lakehouse.py
 # → Abrir http://localhost:8088 en el navegador
 ```
 
-### 10.3 Requisitos para futuras ejecuciones
+### 9.3 Requisitos para futuras ejecuciones
 
 1. ✅ Los 4 nodos deben estar con `yarn node -list` mostrando RUNNING
 2. ✅ `HDFS` con DataNodes vivos (`hdfs dfsadmin -report`)
