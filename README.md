@@ -1,6 +1,6 @@
-# 🏛️ Data Lakehouse — NYC Yellow Taxi Trip Analytics
+# 🏛️ Data Lakehouse (Medallion) — NYC Yellow Taxi Trip Analytics
 
-Pipeline completo **Bronze → Silver → Gold** sobre un cluster **Hadoop 3.3.6 + Spark 3.5 + ZeroTier** de 4 nodos. Procesa ~3 millones de viajes de taxi de NYC y genera KPIs de negocio visualizados en un dashboard interactivo.
+Pipeline batch con arquitectura **Bronze → Silver → Gold** sobre cluster **Hadoop 3.3.6 + Spark 3.5 + ZeroTier** de 4 nodos. Procesa ~3 millones de viajes de taxi de NYC y genera KPIs de negocio visualizados en un dashboard interactivo.
 
 ---
 
