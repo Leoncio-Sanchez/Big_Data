@@ -1,23 +1,78 @@
 # 🏛️ Data Lakehouse (Medallion) — NYC Yellow Taxi Trip Analytics
 
-Pipeline batch con arquitectura **Bronze → Silver → Gold** sobre cluster **Hadoop 3.3.6 + Spark 3.5 + ZeroTier** de 4 nodos. Procesa ~3 millones de viajes de taxi de NYC y genera KPIs de negocio visualizados en un dashboard interactivo.
+## Descripción del proyecto
+
+Pipeline ETL batch basado en **arquitectura Data Lakehouse con patrón Medallion** sobre un cluster Hadoop/Spark distribuido. El modelo de tres capas progresivas (Bronze → Silver → Gold) responde a un principio arquitectónico fundamental: **separación de responsabilidades** en el ciclo de vida del dato.
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│               ARQUITECTURA DATA LAKEHOUSE (MEDALLION)               │
+│                                                                     │
+│  ┌────────────┐    ┌────────────┐    ┌────────────┐                │
+│  │   BRONZE   │ →  │   SILVER   │ →  │    GOLD    │                │
+│  │            │    │            │    │            │                │
+│  │ Ingesta    │    │ Calidad    │    │ Negocio    │                │
+│  │ Inmutable  │    │ Filtrado   │    │ KPIs       │                │
+│  │ RAW        │    │ Tipado     │    │ Agregado   │                │
+│  │            │    │            │    │            │                │
+│  │ Fuente de  │    │ Zona de    │    │ Consumo    │                │
+│  │ verdad     │    │ confianza  │    │ directo    │                │
+│  └─────┬──────┘    └─────┬──────┘    └─────┬───────┘               │
+│        │                 │                 │                         │
+│        ▼                 ▼                 ▼                         │
+│  ┌──────────────────────────────────────────────────────────────┐   │
+│  │        HDFS — Almacenamiento único distribuido (529 GB)       │   │
+│  │  /lakehouse/bronze/  /lakehouse/silver/  /lakehouse/gold/    │   │
+│  └──────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+## Stack tecnológico y decisiones arquitectónicas
+
+| Componente | Decisión | Justificación |
+|-----------|----------|---------------|
+| **Modelo de datos** | Data Lakehouse (Medallion) | El dataset es semiestructurado (Parquet, fechas como string, nulos). Un DW exige schema rígido precarga. Un DL no estructura el consumo. Lakehouse permite ingesta cruda y modelado progresivo. |
+| **Procesamiento** | Batch con PySpark sobre YARN | Dataset histórico mensual (no streaming). Procesar 3M registros en un solo nodo tomaría ~15 min; en 3 executors distribuidos se reduce a ~3.5 min. Spark en memoria vs MapReduce (disco) da ~5× de ganancia. |
+| **Almacenamiento** | HDFS con replicación 3 | Los nodos workers necesitan acceso concurrente a los mismos archivos. HDFS distribuye y replica automáticamente. 529 GB total, 45 MB el dataset. |
+| **Red** | ZeroTier (SD-WAN) | Los 4 nodos están en redes físicas distintas (WiFi doméstica, VirtualBox NAT). ZeroTier crea una VLAN virtual `10.61.61.x` que unifica la conectividad IP necesaria para HDFS/YARN. |
+| **Formato Bronze** | Parquet | Preserva schema original, compresión columnar, lectura eficiente desde Spark. |
+| **Formato Silver** | Parquet particionado por `PULocationID` | Particionamiento físico (265 zonas) para filtros por localización sin escanear todo. El mismo formato columnar acelera las agregaciones de KPIs. |
+| **Formato Gold** | CSV con cabecera | Power BI y Excel leen CSV nativamente sin conectores JDBC/ODBC. Solo 286 filas totales, el overhead de formato es irrelevante. |
+| **Orquestación** | Script único (`procesar_lakehouse.py`) | DAG lineal de 4 etapas sin dependencias externas. No se justifica Airflow/Oozie para un pipeline monofuente bajo demanda. |
+| **Dashboard** | Streamlit + Plotly | Lectura directa desde HDFS vía `hdfs dfs -cat` (RPC). Sin BD intermedia. WebHDFS evitado por problemas de resolución DNS con ZeroTier. |
+
+## Flujo de datos
+
+```
+Bronze                              Silver                              Gold
+┌────────────────────┐             ┌────────────────────┐             ┌────────────────────┐
+│ 3,066,766 registros │   Spark    │ 2,906,607 registros │   Spark    │ 286 filas en 3 CSVs│
+│ 19 columnas        │  ────────→ │ 19 columnas         │  ────────→ │ 24 (financiero)     │
+│ 45 MB Parquet      │   batch    │ particionado x265   │   batch    │ 8 (operativo)       │
+│ /lakehouse/bronze/ │            │ /lakehouse/silver/  │            │ 254 (demanda)       │
+└────────────────────┘             └────────────────────┘             └────────────────────┘
+                                       │                                      │
+                                  Consultas ML                         Streamlit :8501
+                                  (futuro)                             Power BI (directo CSV)
+```
+
+**ETAPA BRONZE** — `bronze_ingest.py` con Python puro + WebHDFS.
+**ETAPAS SILVER + GOLD** — `procesar_lakehouse.py` con PySpark sobre YARN.
+
+## Métricas clave del pipeline
+
+| Métrica | Valor |
+|---------|-------|
+| Registros procesados | 3,066,766 |
+| Tasa de calidad Silver | 94.8% (5.2% descartados) |
+| Tiempo total pipeline | ~3.5 minutos |
+| Workers (executors) | 3 × 4GB RAM / 2 cores |
+| Capacidad HDFS | 529 GB (réplica 3) |
+| Nodos del cluster | 4 vía ZeroTier
 
 ---
 
-## 🏗️ Arquitectura
-
-Se adoptó el modelo **Data Lakehouse** con patrón Medallion (Bronze → Silver → Gold) porque el dataset NYC Taxi es semiestructurado (Parquet, fechas como strings, nulos). Un Data Warehouse exigiría schema rígido antes de cargar; un Data Lake dejaría los datos crudos sin estructura de consumo. El Lakehouse resuelve ambos: ingesta sin filtro (Bronze), calidad y tipado (Silver), y KPIs de negocio listos para Power BI (Gold).
-
-El **procesamiento es batch** (no streaming) porque el dataset es histórico mensual, no un flujo continuo. **PySpark sobre YARN** distribuye las transformaciones en 3 executors (4GB/2 cores cada uno) en workers separados, logrando ~3.5 min para 3M registros — inviable en un solo nodo. **HDFS** unifica el almacenamiento con replicación 3 y ZeroTier actúa como SD-WAN para conectar nodos en redes físicas distintas bajo el rango `10.61.61.x`.
-
-```
-Bronze (Parquet crudo, 45 MB)  →  Silver (Parquet limpio, 2.9M rows)  →  Gold (CSV, 286 filas)
-       │                              │                                      │
-  Ingesta Python puro           Spark en YARN (3 executors)          Power BI / Dashboard
-  WebHDFS puerto 9870           HDFS RPC puerto 9000                 HDFS RPC puerto 9000
-```
-
-El formato **Parquet** en Bronze y Silver aprovecha compresión columnar y schema nativo de Spark. **CSV** en Gold por compatibilidad directa con Power BI (solo 286 filas, el peso es irrelevante).
+## 📋 Índice de Fases
 
 ---
 
