@@ -66,7 +66,8 @@ def crear_spark() -> "SparkSession":  # crea y configura la SparkSession para YA
 
         # ── Event Log para History Server (:18080) ──
         .config("spark.eventLog.enabled", "true")  # habilita bitácora de eventos de Spark
-        .config("spark.eventLog.dir", "file:///tmp/spark-events")  # directorio local para event logs
+        .config("spark.eventLog.dir", "hdfs://10.61.61.105:9000/spark-logs")  # directorio HDFS persistente para event logs
+        .config("spark.history.fs.logDirectory", "hdfs://10.61.61.105:9000/spark-logs")  # History Server lee logs desde HDFS
 
         # ── Recursos: 3 workers × (4 GB + 2 cores) ──
         .config("spark.executor.instances", "3")  # número de workers (executors) = 3

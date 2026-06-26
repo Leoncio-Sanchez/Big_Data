@@ -286,3 +286,26 @@ hdfs dfsadmin -report 2>/dev/null | grep "Under replicated blocks"
 | JAVA_HOME (leo) | Sistema (en PATH) |
 | Usuario servicios Hadoop | `hadoop` (workers), `leo` (master) |
 | Red ZeroTier | `10.61.61.0/24` — interfaz `ztcdchsekn` |
+
+
+
+# Conexión por SSH a los workers
+
+# XUBUNTU
+sshpass -p 'xubuntu' ssh -o StrictHostKeyChecking=no hadoop@10.61.61.12
+
+# DEBIAN
+sshpass -p 'ADMIN123' ssh -o StrictHostKeyChecking=no hadoop@10.61.61.65
+⚡ Ejecutar comandos remotos por SSH
+
+# Ejemplo: verificar hostname
+ssh hadoop@10.61.61.12 "hostname"
+ssh hadoop@10.61.61.65 "hostname"
+
+# Ejemplo: ver procesos Hadoop
+ssh hadoop@10.61.61.12 "ps aux | grep DataNode"
+ssh hadoop@10.61.61.65 "ps aux | grep DataNode"
+
+# Ejemplo: iniciar DataNode
+ssh hadoop@10.61.61.12 "/opt/hadoop/bin/hdfs --daemon start datanode"
+ssh hadoop@10.61.61.65 "/opt/hadoop/bin/hdfs --daemon start datanode"
