@@ -68,11 +68,7 @@ Bronze                              Silver                              Gold
 | Tiempo total pipeline | ~3.5 minutos |
 | Workers (executors) | 3 × 4GB RAM / 2 cores |
 | Capacidad HDFS | 529 GB (réplica 3) |
-| Nodos del cluster | 4 vía ZeroTier
-
----
-
-## 📋 Índice de Fases
+| Nodos del cluster | 4 vía ZeroTier |
 
 ---
 
