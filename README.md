@@ -53,7 +53,7 @@ Bronze                              Silver                              Gold
 └────────────────────┘             └────────────────────┘             └────────────────────┘
                                        │                                      │
                                   Consultas ML                         Streamlit :8501
-                                  (futuro)                             Power BI (directo CSV)
+                                  (futuro)                             
 ```
 
 **ETAPA BRONZE** — `bronze_ingest.py` con Python puro + WebHDFS.
