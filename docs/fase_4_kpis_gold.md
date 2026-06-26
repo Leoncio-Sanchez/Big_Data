@@ -4,13 +4,96 @@
 
 Calcular 3 KPIs de negocio desde los datos limpios en Silver y exportarlos como CSV con cabecera para consumo directo desde Power BI.
 
-**Script:** `/home/leo/Documentos/Big data/procesar_lakehouse.py` — Función `etapa3_gold()`
+**Script:** `/home/leo/Documentos/Big data/procesar_lakehouse.py` — Funciones `etapa3_gold()` y `main()`
 
 ---
 
-## Pipeline Completo — Bronze → Silver → Gold
+## 1. Verificación del estado del cluster
 
-### Arquitectura del pipeline
+Antes de ejecutar el pipeline, verificar que HDFS y YARN estén operativos:
+
+### 1.1 Procesos Java activos (jps)
+
+```bash
+jps
+```
+
+Salida esperada (en el master):
+
+```
+12345 NameNode
+12346 DataNode
+12347 SecondaryNameNode
+12348 ResourceManager
+12349 NodeManager
+```
+
+Si faltan procesos, iniciar servicios:
+
+```bash
+# HDFS
+/opt/hadoop/sbin/start-dfs.sh
+
+# YARN
+/opt/hadoop/sbin/start-yarn.sh
+```
+
+### 1.2 Nodos de YARN
+
+```bash
+yarn node -list
+```
+
+Salida esperada — nodos en estado `RUNNING`:
+
+```
+2026-06-25 20:00:00,000 INFO ...: Connecting to ResourceManager at /10.61.61.105:8032
+Total Nodes:3
+         Node-Id             Node-State Node-Http-Address       Number-of-Running-Containers
+   xubuntu:45123              RUNNING    xubuntu:8042            0
+   debian:45124               RUNNING    debian:8042             0
+   isait-VirtualBox:45125     RUNNING    isait-VirtualBox:8042   0
+```
+
+### 1.3 Aplicaciones en YARN
+
+```bash
+yarn application -list
+```
+
+Muestra las aplicaciones Spark activas o finalizadas.
+
+### 1.4 Estado de HDFS
+
+```bash
+hdfs dfsadmin -report 2>/dev/null | head -20
+```
+
+Salida esperada:
+
+```
+Configured Capacity: 529 GB
+Present Capacity: 480 GB
+DFS Remaining: 450 GB
+DFS Used: 30 GB
+DFS Used%: 6.25%
+Live datanodes: 3
+Dead datanodes: 0
+```
+
+### 1.5 Datos existentes en el lakehouse
+
+```bash
+hdfs dfs -ls -R /lakehouse/ 2>/dev/null
+```
+
+Verifica que las capas Bronze/Silver/Gold tengan datos antes de ejecutar.
+
+---
+
+## 2. Pipeline Completo — Bronze → Silver → Gold
+
+### 2.1 Arquitectura del pipeline
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
@@ -33,21 +116,44 @@ Calcular 3 KPIs de negocio desde los datos limpios en Silver y exportarlos como 
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-### Orquestación: función `main()`
+### 2.2 Orquestación: función `main()`
 
-El pipeline se ejecuta desde una sola entrada: `procesar_lakehouse.py`. La función `main()` orquesta cada etapa secuencialmente:
+El pipeline completo se ejecuta desde un solo script. La función `main()` en `procesar_lakehouse.py` orquesta cada etapa secuencialmente:
 
 ```python
 def main() -> int:
-    verificar_entorno()         # 1. PySpark disponible?
-    spark = crear_spark()       # 2. SparkSession en YARN
-    df_silver = etapa2_silver(spark)   # 3. Bronze → Silver
-    etapa3_gold(spark, df_silver)      # 4. Silver → Gold
-    spark.stop()                # 5. Liberar recursos
-    return 0
+    if not verificar_entorno():       # Paso 1: PySpark instalado?
+        return 1
+
+    spark = None
+    try:
+        spark = crear_spark()         # Paso 2: SparkSession en YARN
+
+        df_silver = etapa2_silver(spark)   # Paso 3: Bronze → Silver
+        if df_silver is None:
+            return 2
+
+        if not etapa3_gold(spark, df_silver):  # Paso 4: Silver → Gold
+            return 3
+
+        return 0  # ✅ Éxito
+
+    finally:
+        if spark is not None:
+            spark.stop()              # Paso 5: Liberar recursos en YARN
 ```
 
-### Mapa de ejecución distribuida
+**Códigos de retorno:**
+
+| Código | Significado |
+|:------:|-------------|
+| 0 | Pipeline completado con éxito ✅ |
+| 1 | PySpark no está instalado |
+| 2 | ETAPA 2 (Silver) falló |
+| 3 | ETAPA 3 (Gold) falló |
+| 4 | Error crítico inesperado |
+
+### 2.3 Mapa de ejecución distribuida
 
 ```
 MASTER — leo (10.61.61.105)
@@ -63,37 +169,35 @@ MASTER — leo (10.61.61.105)
       │Executor1│   │Executor2│  │ Executor3  │
       │XUBUNTU  │   │DEBIAN   │  │ isait-VB   │
       │4G/2core │   │4G/2core │  │ 4G/2core   │
-      └─────────┘   └─────────┘  └───────────┘
-           │              │          │
-      ┌────▼──────────────▼──────────▼────┐
-      │  HDFS — Data locality             │
-      │  Cada executor lee/escribe        │
-      │  en su DataNode local             │
-      └───────────────────────────────────┘
+      │         │   │         │  │            │
+      │Lee/HDFS │   │Lee/HDFS │  │ Lee/HDFS   │
+      │Filtra   │   │Filtra   │  │ Filtra     │
+      │Agrega   │   │Agrega   │  │ Agrega     │
+      └─────────┘   └─────────┘  └────────────┘
 ```
 
-### Trazado completo de ejecución
+### 2.4 Trazado completo de ejecución (con tiempos reales)
 
 ```
-ETAPA                         | TIEMPO   | DETALLE
-══════════════════════════════╪══════════╪══════════════════════════════════════
-1. Verificación PySpark       | inst.    | import pyspark → 3.5.0
-2. SparkSession en YARN       | ~2 min   | 3 executors × 4GB/2 cores
-   ├─ Upload spark_libs.zip   |          | JARs a HDFS staging
-   ├─ Upload pyspark.zip      |          | PySpark a workers
-   └─ Submit al RM            |          | app_id = application_...0005
-3. ETAPA 2: Leer Bronze       | ~8s      | 3,066,766 registros
-4. ETAPA 2: Limpiar           | ~13s     | 2,906,607 (5.2% descarte)
-5. ETAPA 2: Escribir Silver   | ~2 min   | 265 particiones PULocationID
-6. ETAPA 3: KPI Financiero    | ~29s     | 24 filas (ingreso/propina × hora)
-7. ETAPA 3: KPI Operativo     | ~14s     | 8 filas (duración/dist × pasajero)
-8. ETAPA 3: KPI Demanda       | ~26s     | 254 filas (viajes × zona)
-9. Cerrar SparkSession        | inst.    | Recursos liberados en YARN
-──────────────────────────────┴──────────┴──────────────────────────────────────
-  TOTAL                       | ~3.5 min | ✅ PIPELINE COMPLETO
+ETAPA                         | TIEMPO    | RESULTADO
+══════════════════════════════╪═══════════╪══════════════════════════════════════
+1. Verificación PySpark       | instant.  | ✓ PySpark 3.5.0 disponible
+2. Creación SparkSession      | ~2 min    | ✓ YARN, 3 executors × 4GB/2 cores
+   ├─ Upload spark_libs.zip   |           |   Subida de JARs a HDFS staging
+   ├─ Upload pyspark.zip      |           |
+   └─ Submit to ResourceManager|          |   application_...0005 ACCEPTED→RUNNING
+3. ETAPA 2: Lectura Bronze    | ~8s       |   3,066,766 registros leídos ✅
+4. ETAPA 2: Limpieza          | ~13s      |   2,906,607 registros (5.2% descarte) ✅
+5. ETAPA 2: Escritura Silver  | ~2 min    |   Parquet particionado por PULocationID ✅
+6. ETAPA 3: KPI Financiero    | ~29s      |   24 filas (ingreso/propina por hora) ✅
+7. ETAPA 3: KPI Operativo     | ~14s      |   8 filas (duración/dist por pasajeros) ✅
+8. ETAPA 3: KPI Demanda       | ~26s      |   254 filas (viajes por zona) ✅
+9. SparkSession cerrada       | instant.  |   Recursos liberados en YARN ✅
+──────────────────────────────┴───────────┴──────────────────────────────────────
+   TIEMPO TOTAL               | ~3.5 min  |   ✅ PIPELINE COMPLETO
 ```
 
-### Comando de ejecución
+### 2.5 Comando de ejecución
 
 ```bash
 cd "/home/leo/Documentos/Big data"
@@ -104,7 +208,7 @@ SPARK_LOCAL_IP=10.61.61.105 \
 spark-submit --master yarn --deploy-mode client procesar_lakehouse.py
 ```
 
-### Logs de una ejecución real
+### 2.6 Logs reales de la ejecución
 
 ```
 2026-06-25 20:47:31 | lakehouse-spark       | Registros leídos desde Bronze: 3066766
@@ -116,19 +220,19 @@ spark-submit --master yarn --deploy-mode client procesar_lakehouse.py
 2026-06-25 20:51:04 | lakehouse-spark       | ✓ PIPELINE COMPLETO: Bronze → Silver → Gold
 ```
 
-### Estados de la SparkSession en YARN
+### 2.7 Estados de la aplicación en YARN
 
-| Momento | Estado en YARN | Recurso |
-|---------|:--------------:|---------|
-| Al enviar `spark-submit` | `ACCEPTED` | Cola de ResourceManager |
-| Mientras se descargan JARs | `RUNNING` | 1 contenedor (AM) |
-| Ejecutando transformaciones | `RUNNING` | 4 contenedores (AM + 3 executors) |
-| Al finalizar | `FINISHED` | Liberado |
-
+| Momento | Estado | Contenedores | Descripción |
+|---------|:------:|:------------:|-------------|
+| `spark-submit` enviado | `ACCEPTED` | 0 | En cola del ResourceManager |
+| AM asignado | `RUNNING` | 1 (AM) | ApplicationMaster negociando recursos |
+| Executors desplegados | `RUNNING` | 4 (AM + 3 exec) | Workers listos para procesar |
+| Transformaciones activas | `RUNNING` | 4 | Procesando datos en paralelo |
+| `spark.stop()` ejecutado | `FINISHED` | 0 | Recursos liberados |
 
 ---
 
-## 1. KPI 1 — Financiero: Ingreso y propina por hora
+## 3. KPI 1 — Financiero: Ingreso y propina por hora
 
 ### Consulta PySpark
 
@@ -144,17 +248,17 @@ kpi_financiero = (df_silver
     .orderBy("hora"))
 ```
 
-### ¿Qué responde este KPI?
+### ¿Qué responde?
 
-- **¿En qué horas del día se genera más ingreso?** — Identificar horas pico de facturación
+- **¿En qué horas se genera más ingreso?** — Horas pico de facturación
 - **¿Dónde se deja más propina?** — Horas con mejor propina promedio
-- **¿Cuál es el volumen de viajes por hora?** — Distribución horaria de la demanda
+- **¿Cuál es el volumen de viajes por hora?** — Distribución horaria
 
 ### Salida
 
 | Ruta | Formato | Filas |
 |------|---------|:-----:|
-| `/lakehouse/gold/kpi_financiero/` | CSV con header | 24 (una por hora, 0-23) |
+| `/lakehouse/gold/kpi_financiero/` | CSV con header | 24 (0-23) |
 
 | hora | ingreso_total | propina_promedio | total_viajes |
 |:----:|:-------------:|:----------------:|:------------:|
@@ -165,7 +269,7 @@ kpi_financiero = (df_silver
 
 ---
 
-## 2. KPI 2 — Operativo: Rendimiento por pasajero
+## 4. KPI 2 — Operativo: Rendimiento por pasajero
 
 ### Consulta PySpark
 
@@ -180,28 +284,27 @@ kpi_operativo = (df_silver
     .orderBy("passenger_count"))
 ```
 
-### ¿Qué responde este KPI?
+### ¿Qué responde?
 
-- **¿Los viajes con más pasajeros son más largos?** — Correlación pasajeros vs duración
-- **¿Son más eficientes en distancia?** — Distancia promedio por pasajero
+- **¿Viajes con más pasajeros son más largos?** — Correlación pasajeros vs duración
+- **¿Son más eficientes?** — Distancia promedio por pasajero
 - **¿Qué cantidad de pasajeros es más común?** — Distribución de viajes
 
 ### Salida
 
 | Ruta | Formato | Filas |
 |------|---------|:-----:|
-| `/lakehouse/gold/kpi_operativo/` | CSV con header | 8 (passenger_count 1-8) |
+| `/lakehouse/gold/kpi_operativo/` | CSV con header | 8 (1-8 pasajeros) |
 
 | passenger_count | duracion_promedio_min | distancia_promedio_km | total_viajes |
 |:---------------:|:---------------------:|:---------------------:|:------------:|
 | 1 | 15.2 min | 4.8 km | 1,850,000 |
 | 2 | 18.7 min | 6.1 km | 820,000 |
 | 3 | 22.1 min | 7.3 km | 180,000 |
-| ... | ... | ... | ... |
 
 ---
 
-## 3. KPI 3 — Demanda: Viajes por zona de recogida
+## 5. KPI 3 — Demanda: Viajes por zona de recogida
 
 ### Consulta PySpark
 
@@ -212,67 +315,44 @@ kpi_demanda = (df_silver
     .orderBy(F.desc("total_viajes")))
 ```
 
-### ¿Qué responde este KPI?
+### ¿Qué responde?
 
-- **¿Cuáles son las zonas con mayor demanda de taxis?** — Ranking de PULocationID
-- **¿Qué concentración tienen las top zonas?** — Porcentaje de viajes en las zonas más populares
+- **¿Zonas con mayor demanda?** — Ranking de PULocationID
+- **¿Concentración del Top N?** — Porcentaje en zonas populares
 
 ### Salida
 
 | Ruta | Formato | Filas |
 |------|---------|:-----:|
-| `/lakehouse/gold/kpi_demanda/` | CSV con header | 254 (zonas con al menos 1 viaje) |
+| `/lakehouse/gold/kpi_demanda/` | CSV con header | 254 |
 
 | PULocationID | total_viajes |
 |:------------:|:------------:|
 | 237 | 25,430 |
 | 236 | 22,100 |
 | 161 | 18,750 |
-| ... | ... |
 
 ---
 
-## 4. Código de Exportación
-
-Los 3 KPIs se exportan como CSV con cabecera:
+## 6. Formato de Exportación
 
 ```python
-def exportar_kpi(kpi_df, ruta):
-    (kpi_df
-        .write
-        .mode("overwrite")
-        .option("header", "true")
-        .csv(ruta))
+(kpi.write
+    .mode("overwrite")
+    .option("header", "true")
+    .csv(kpi_path))
 ```
 
-### ¿Por qué CSV y no Parquet?
+### CSV vs Parquet para Power BI
 
-| Formato | Ventajas | Desventajas |
-|---------|----------|-------------|
+| Formato | Ventaja | Desventaja |
+|---------|---------|------------|
 | **Parquet** | Columnar, comprimido, schema nativo | Power BI requiere config extra |
-| **CSV** | Universal, Power BI lo lee directo | Más peso, sin compresión |
-
-Para Power BI, CSV es más simple y directo.
+| **CSV** | Universal, Power BI directo | Más peso, sin compresión |
 
 ---
 
-## 5. Tiempos de Ejecución
-
-```
-ETAPA                         | TIEMPO   | RESULTADO
-══════════════════════════════╪══════════╪══════════════════════════════════════
-1. Creación SparkSession      | ~2 min   | ✓ YARN, 3 executors × 4GB/2 cores
-2. ETAPA 2: Bronze → Silver   | ~2.5 min | ✓ 2,906,607 registros
-3. KPI 1: Financiero          | ~29s     | ✓ 24 filas
-4. KPI 2: Operativo           | ~14s     | ✓ 8 filas
-5. KPI 3: Demanda             | ~26s     | ✓ 254 filas
-──────────────────────────────┴──────────┴──────────────────────────────────────
-  TOTAL                       | ~3.5 min | ✓ PIPELINE COMPLETO
-```
-
----
-
-## 6. Resultados Finales del Pipeline
+## 7. Resultados Finales
 
 | Indicador | Valor |
 |-----------|-------|
@@ -282,24 +362,35 @@ ETAPA                         | TIEMPO   | RESULTADO
 | Tamaño Bronze | 45.5 MB (×3 réplicas = 136.4 MB) |
 | Tiempo total del pipeline | ~3.5 minutos |
 | Workers utilizados | 3 × (4 GB RAM, 2 cores) |
+| Shuffle partitions | 12 |
+| KPI Financiero | 24 filas |
+| KPI Operativo | 8 filas |
+| KPI Demanda | 254 filas |
 
 ---
 
-## 7. Estructura Final en HDFS
+## 8. Estructura Final en HDFS
 
 ```
 /lakehouse/
 ├── bronze/
-│   └── yellow_tripdata_2023-01.parquet   45.5 MB × 3
+│   └── yellow_tripdata_2023-01.parquet          45.5 MB × réplica 3
 │
 ├── silver/
 │   └── taxis_limpio/
-│       ├── PULocationID=1/
+│       ├── PULocationID=1/        (partición)
+│       ├── PULocationID=2/
 │       ├── ...
 │       └── PULocationID=265/
 │
 └── gold/
-    ├── kpi_financiero/     (24 filas — ingreso/propina por hora)
-    ├── kpi_operativo/      (8 filas — duración/distancia por pasajero)
-    └── kpi_demanda/        (254 filas — viajes por zona)
+    ├── kpi_financiero/
+    │   ├── part-00000-....csv      (24 filas con header)
+    │   └── ...
+    ├── kpi_operativo/
+    │   ├── part-00000-....csv      (8 filas con header)
+    │   └── ...
+    └── kpi_demanda/
+        ├── part-00000-....csv      (254 filas con header)
+        └── ...
 ```

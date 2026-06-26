@@ -4,6 +4,23 @@ Pipeline completo **Bronze → Silver → Gold** sobre un cluster **Hadoop 3.3.6
 
 ---
 
+## 🏗️ Arquitectura
+
+Se adoptó el modelo **Data Lakehouse** con patrón Medallion (Bronze → Silver → Gold) porque el dataset NYC Taxi es semiestructurado (Parquet, fechas como strings, nulos). Un Data Warehouse exigiría schema rígido antes de cargar; un Data Lake dejaría los datos crudos sin estructura de consumo. El Lakehouse resuelve ambos: ingesta sin filtro (Bronze), calidad y tipado (Silver), y KPIs de negocio listos para Power BI (Gold).
+
+El **procesamiento es batch** (no streaming) porque el dataset es histórico mensual, no un flujo continuo. **PySpark sobre YARN** distribuye las transformaciones en 3 executors (4GB/2 cores cada uno) en workers separados, logrando ~3.5 min para 3M registros — inviable en un solo nodo. **HDFS** unifica el almacenamiento con replicación 3 y ZeroTier actúa como SD-WAN para conectar nodos en redes físicas distintas bajo el rango `10.61.61.x`.
+
+```
+Bronze (Parquet crudo, 45 MB)  →  Silver (Parquet limpio, 2.9M rows)  →  Gold (CSV, 286 filas)
+       │                              │                                      │
+  Ingesta Python puro           Spark en YARN (3 executors)          Power BI / Dashboard
+  WebHDFS puerto 9870           HDFS RPC puerto 9000                 HDFS RPC puerto 9000
+```
+
+El formato **Parquet** en Bronze y Silver aprovecha compresión columnar y schema nativo de Spark. **CSV** en Gold por compatibilidad directa con Power BI (solo 286 filas, el peso es irrelevante).
+
+---
+
 ## 📋 Índice de Fases
 
 | Fase | Descripción |
