@@ -88,16 +88,16 @@ def crear_spark() -> SparkSession:
 | `spark.master` | `yarn` | Usar YARN como gestor de recursos del cluster |
 | `spark.driver.host` | `10.61.61.105` | IP ZeroTier de leo para que workers contacten al driver |
 | `spark.executor.instances` | `3` | 1 executor por worker (XUBUNTU, DEBIAN, isait-VB) |
-| `spark.executor.memory` | `4g` | Deja 4GB libres para OS en cada worker de 8GB |
-| `spark.executor.cores` | `2` | 2 tareas paralelas por executor |
-| `spark.sql.shuffle.partitions` | `12` | 3 executors × 2 cores × 2 = 12 particiones |
+| `spark.executor.memory` | `2g` | Deja 1GB libre para OS en cada worker de 4GB (con overhead de 1GB) |
+| `spark.executor.cores` | `3` | 3 tareas paralelas por executor (1 por CPU) |
+| `spark.sql.shuffle.partitions` | `18` | 3 executors × 3 cores × 2 = 18 particiones |
 | `spark.network.timeout` | `800s` | Tolerancia a latencia de red ZeroTier |
 | `spark.sql.adaptive.enabled` | `true` | AQE: Spark reoptimiza en runtime según los datos |
 
 ### Distribución de recursos
 
 ```
-MASTER (leo - 10.61.61.105)
+MASTER (leo - 10.61.61.105 - 16GB, 16 CPUs)
 ┌───────────────────────────────────────┐
 │ Spark Driver (2GB RAM, 1 core)        │
 │ - Planifica el DAG de transformaciones│
@@ -108,7 +108,7 @@ MASTER (leo - 10.61.61.105)
     ┌────▼────┐    ┌────▼────┐    ┌────▼────┐
     │Executor1│    │Executor2│    │Executor3 │
     │XUBUNTU  │    │DEBIAN   │    │isait-VB  │
-    │4G/2core │    │4G/2core │    │4G/2core  │
+    │2G/3core │    │2G/3core │    │2G/3core  │
     └─────────┘    └─────────┘    └──────────┘
 ```
 

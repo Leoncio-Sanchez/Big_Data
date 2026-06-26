@@ -66,7 +66,7 @@ Bronze                              Silver                              Gold
 | Registros procesados | 3,066,766 |
 | Tasa de calidad Silver | 94.8% (5.2% descartados) |
 | Tiempo total pipeline | ~3.5 minutos |
-| Workers (executors) | 3 × 4GB RAM / 2 cores |
+| Workers (executors) | 3 × 2GB RAM / 3 cores |
 | Capacidad HDFS | 529 GB (réplica 3) |
 | Nodos del cluster | 4 vía ZeroTier |
 

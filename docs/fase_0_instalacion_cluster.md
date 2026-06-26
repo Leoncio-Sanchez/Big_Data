@@ -8,12 +8,12 @@ Desplegar un cluster Hadoop 3.3.6 distribuido en 4 nodos interconectados via Zer
 
 ## 1. Topología del Cluster
 
-| Nodo | Hostname | IP ZeroTier | RAM | Roles |
-|:----:|----------|:-----------:|:---:|-------|
-| 1 | `leo` | 10.61.61.105 | 8GB+ | NameNode, ResourceManager, DataNode, NodeManager |
-| 2 | `XUBUNTU` | 10.61.61.12 | 4GB+ | DataNode, NodeManager |
-| 3 | `DEBIAN.myguest.virtualbox.org` | 10.61.61.65 | 4GB+ | DataNode, NodeManager |
-| 4 | `isait-VirtualBox` | 10.61.61.7 | 4GB+ | DataNode, NodeManager |
+| Nodo | Hostname | IP ZeroTier | RAM / CPU | Roles |
+|:----:|----------|:-----------:|:---------:|-------|
+| 1 | `leo` | 10.61.61.105 | 16GB / 16 CPUs | NameNode, ResourceManager, DataNode, NodeManager |
+| 2 | `XUBUNTU` | 10.61.61.12 | 4GB / 3 CPUs | DataNode, NodeManager |
+| 3 | `DEBIAN.myguest.virtualbox.org` | 10.61.61.65 | 4GB / 3 CPUs | DataNode, NodeManager |
+| 4 | `isait-VirtualBox` | 10.61.61.7 | 4GB / 3 CPUs | DataNode, NodeManager |
 
 **Usuario Hadoop:** `hadoop` (en todos los nodos, para servicios)
 **Usuario operador:** `leo` (en master)
@@ -220,7 +220,7 @@ export HADOOP_SSH_OPTS="-o StrictHostKeyChecking=no"
 </configuration>
 ```
 
-**`yarn-site.xml`** — ResourceManager en leo, 8GB por nodo
+**`yarn-site.xml`** — ResourceManager en leo, 3GB asignados para contenedores por nodo peón (4GB físico, 3 CPUs)
 
 ```xml
 <configuration>
@@ -254,15 +254,19 @@ export HADOOP_SSH_OPTS="-o StrictHostKeyChecking=no"
     </property>
     <property>
         <name>yarn.nodemanager.resource.memory-mb</name>
-        <value>8192</value>
+        <value>3072</value>
+    </property>
+    <property>
+        <name>yarn.nodemanager.resource.cpu-vcores</name>
+        <value>3</value>
     </property>
     <property>
         <name>yarn.scheduler.maximum-allocation-mb</name>
-        <value>8192</value>
+        <value>3072</value>
     </property>
     <property>
         <name>yarn.scheduler.minimum-allocation-mb</name>
-        <value>1024</value>
+        <value>512</value>
     </property>
     <property>
         <name>yarn.nodemanager.vmem-check-enabled</name>

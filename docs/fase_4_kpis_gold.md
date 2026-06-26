@@ -112,7 +112,7 @@ Verifica que las capas Bronze/Silver/Gold tengan datos antes de ejecutar.
 │  │  leo:9870 (Web UI) · 10.61.61.105:9000 (RPC)             │   │
 │  └──────────────────────────────────────────────────────────┘   │
 │                                                                  │
-│  Motor: PySpark 3.5 sobre YARN · 3 executors × (4GB + 2 cores)  │
+│  Motor: PySpark 3.5 sobre YARN · 3 executors × (2GB + 3 cores)  │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
@@ -168,7 +168,7 @@ MASTER — leo (10.61.61.105)
       ┌────▼────┐   ┌────▼────┐  ┌──▼────────┐
       │Executor1│   │Executor2│  │ Executor3  │
       │XUBUNTU  │   │DEBIAN   │  │ isait-VB   │
-      │4G/2core │   │4G/2core │  │ 4G/2core   │
+      │2G/3core │   │2G/3core │  │ 2G/3core   │
       │         │   │         │  │            │
       │Lee/HDFS │   │Lee/HDFS │  │ Lee/HDFS   │
       │Filtra   │   │Filtra   │  │ Filtra     │
@@ -182,7 +182,7 @@ MASTER — leo (10.61.61.105)
 ETAPA                         | TIEMPO    | RESULTADO
 ══════════════════════════════╪═══════════╪══════════════════════════════════════
 1. Verificación PySpark       | instant.  | ✓ PySpark 3.5.0 disponible
-2. Creación SparkSession      | ~2 min    | ✓ YARN, 3 executors × 4GB/2 cores
+2. Creación SparkSession      | ~2 min    | ✓ YARN, 3 executors × 2GB/3 cores
    ├─ Upload spark_libs.zip   |           |   Subida de JARs a HDFS staging
    ├─ Upload pyspark.zip      |           |
    └─ Submit to ResourceManager|          |   application_...0005 ACCEPTED→RUNNING
@@ -361,8 +361,8 @@ kpi_demanda = (df_silver
 | Registros descartados | 160,159 (5.2%) |
 | Tamaño Bronze | 45.5 MB (×3 réplicas = 136.4 MB) |
 | Tiempo total del pipeline | ~3.5 minutos |
-| Workers utilizados | 3 × (4 GB RAM, 2 cores) |
-| Shuffle partitions | 12 |
+| Workers utilizados | 3 × (4 GB RAM, 3 CPUs) |
+| Shuffle partitions | 18 |
 | KPI Financiero | 24 filas |
 | KPI Operativo | 8 filas |
 | KPI Demanda | 254 filas |
